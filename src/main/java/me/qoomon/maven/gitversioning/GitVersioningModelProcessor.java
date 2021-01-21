@@ -34,13 +34,17 @@ import javax.inject.Singleton;
 import org.apache.maven.building.Source;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.model.Build;
+import org.apache.maven.model.Dependency;
+import org.apache.maven.model.DependencyManagement;
 import org.apache.maven.model.Model;
 import org.apache.maven.model.Parent;
 import org.apache.maven.model.Plugin;
 import org.apache.maven.model.PluginExecution;
+import org.apache.maven.model.PluginManagement;
 import org.apache.maven.model.Profile;
 import org.apache.maven.model.building.DefaultModelProcessor;
 import org.apache.maven.model.building.ModelProcessor;
+import org.apache.maven.model.io.xpp3.MavenXpp3Writer;
 import org.apache.maven.session.scope.internal.SessionScope;
 import org.codehaus.plexus.logging.Logger;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
@@ -260,8 +264,49 @@ public class GitVersioningModelProcessor extends DefaultModelProcessor {
                 }
             }
 
-            // TODO
-            // update version within dependencies, dependency management, plugins, plugin management
+            for (Model previousModel : virtualProjectModelCache.values()) {
+                // dependency management section
+                DependencyManagement dependencyManagement = previousModel.getDependencyManagement();
+                if (dependencyManagement != null && dependencyManagement.getDependencies() != null ) {
+                    updateDependencies(projectId, virtualProjectModel, dependencyManagement.getDependencies());
+                }
+                // dependency section
+                if (previousModel.getDependencies() != null) {
+                    updateDependencies(projectId, virtualProjectModel, previousModel.getDependencies());
+                }
+                // Plugin section
+                List<Plugin> plugins = previousModel.getBuild().getPlugins();
+                if (plugins != null) {
+                    updatePlugins(projectId, virtualProjectModel, plugins);
+                }
+                // PluginManagement section
+                PluginManagement pluginManagement = previousModel.getBuild().getPluginManagement();
+                if (pluginManagement != null && pluginManagement.getPlugins() != null) {
+                    updatePlugins(projectId, virtualProjectModel, pluginManagement.getPlugins());
+                }
+
+                // update profile's dependency and dependency management section too
+                for (Profile previousModelProfile : previousModel.getProfiles()) {
+                    dependencyManagement = previousModelProfile.getDependencyManagement();
+                    if (dependencyManagement != null && dependencyManagement.getDependencies() != null ) {
+                        updateDependencies(projectId, virtualProjectModel, dependencyManagement.getDependencies());
+                    }
+                    // dependency section
+                    if (previousModelProfile.getDependencies() != null) {
+                        updateDependencies(projectId, virtualProjectModel, previousModelProfile.getDependencies());
+                    }
+                    // Plugin section
+                    plugins = previousModelProfile.getBuild().getPlugins();
+                    if (plugins != null) {
+                        updatePlugins(projectId, virtualProjectModel, plugins);
+                    }
+                    // PluginManagement section
+                    pluginManagement = previousModelProfile.getBuild().getPluginManagement();
+                    if (pluginManagement != null && pluginManagement.getPlugins() != null) {
+                        updatePlugins(projectId, virtualProjectModel, pluginManagement.getPlugins());
+                    }
+                }
+            }
 
             logger.info("");
 
@@ -290,11 +335,50 @@ public class GitVersioningModelProcessor extends DefaultModelProcessor {
                         sessionProjectDirectories.add(new File(projectModel.getProjectDirectory(), module).getCanonicalPath());
                     }
                 }
+
             }
 
             this.virtualProjectModelCache.put(projectId, virtualProjectModel);
+
+            for (Model model : virtualProjectModelCache.values()) {
+                if(projectModel != model){
+                    MavenXpp3Writer writer = new MavenXpp3Writer();
+                    File file = new File(model.getPomFile().getParent(), GIT_VERSIONING_POM_NAME);
+                    writer.write(new FileOutputStream(file), model);
+                }
+            }
         }
         return virtualProjectModel;
+    }
+
+    private void updateDependencies(String projectId, Model virtualProjectModel, List<Dependency> dependencies) {
+        for (Dependency dependency : dependencies) {
+            if (dependency.getVersion() != null) {
+                GAV dep = new GAV(dependency);
+                if (dep.getProjectId().equals(projectId)) {
+                    if (virtualProjectModel.getVersion() != null) {
+                        dependency.setVersion(virtualProjectModel.getVersion());
+                    } else {
+                        dependency.setVersion(virtualProjectModel.getParent().getVersion());
+                    }
+                }
+            }
+        }
+    }
+
+    private void updatePlugins(String projectId, Model virtualProjectModel, List<Plugin> dependencies) {
+        for (Plugin plugin : dependencies) {
+            if (plugin.getVersion() != null) {
+                GAV dep = new GAV(plugin);
+                if (dep.getProjectId().equals(projectId)) {
+                    if (virtualProjectModel.getVersion() != null) {
+                        plugin.setVersion(virtualProjectModel.getVersion());
+                    } else {
+                        plugin.setVersion(virtualProjectModel.getParent().getVersion());
+                    }
+                }
+            }
+        }
     }
 
     private GitVersionDetails getGitVersionDetails(Configuration config, File repositoryDirectory) {
